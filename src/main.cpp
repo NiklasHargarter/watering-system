@@ -12,10 +12,10 @@ AsyncWebServer server(80);
 const int SOIL_MOISTURE_PIN = A0; // Connect soil moisture sensor to GPIO 34 (ADC pin)
 
 // Values
-int value1 = 50;             // Default value
-int value2 = 75;             // Default value
-int soilMoistureRaw = 0;     // Raw ADC value from sensor
-int soilMoisturePercent = 0; // Moisture in percentage
+int moistureThresholdWet = 50; // Lower threshold - soil is wet enough below this value
+int moistureThresholdDry = 75; // Upper threshold - soil is too dry above this value, needs watering
+int soilMoistureRaw = 0;       // Raw ADC value from sensor
+int soilMoisturePercent = 0;   // Moisture in percentage
 
 // Calibration values for soil moisture sensor
 const int AIR_VALUE = 3700;   // Value when sensor is in air (dry)
@@ -24,76 +24,48 @@ const int WATER_VALUE = 1500; // Value when sensor is in water (wet)
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
-  <title>Welcome</title>
+  <title>Watering System</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: Arial; text-align: center; margin: 0px auto; padding: 20px; }
-    .container { width: 90%; max-width: 400px; margin: 0 auto; }
-    input, select { width: 100%; padding: 12px; margin: 8px 0; box-sizing: border-box; }
-    input[type=submit] { background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    .slider-container { display: flex; flex-direction: column; align-items: center; margin: 10px 0; }
-    .slider-value { margin-top: 5px; font-weight: bold; }
-    .sensor-container { background-color: #f5f5f5; border-radius: 10px; padding: 15px; margin: 20px 0; }
-    .sensor-value { font-size: 24px; font-weight: bold; margin: 10px 0; }
-    .sensor-raw { font-size: 14px; color: #666; }
-    .moisture-indicator { width: 100%; height: 20px; background: linear-gradient(to right, #ff4c4c, #ffad4c, #4caf50); border-radius: 10px; position: relative; margin-top: 10px; }
-    .moisture-level { height: 100%; width: 10px; background-color: #000; position: absolute; transform: translateX(-50%); }
-    .refresh-btn { background-color: #2196F3; color: white; border: none; border-radius: 4px; padding: 10px 15px; cursor: pointer; margin-top: 10px; }
-  </style>  <script>
+    body { font-family: Arial; margin: 20px; }
+    .container { max-width: 400px; margin: 0 auto; }
+    input[type=range] { width: 100%; }
+    input[type=submit] { background-color: #4CAF50; color: white; border: none; padding: 10px; }
+    .sensor { background-color: #f0f0f0; padding: 10px; margin: 10px 0; }
+  </style>
+  <script>
     function refreshSensorData() {
       fetch('/sensor-data')
         .then(response => response.json())
         .then(data => {
           document.getElementById('moisture-percent').innerHTML = data.percent + '%';
-          document.getElementById('moisture-raw').innerHTML = '(Raw: ' + data.raw + ')';
-          document.getElementById('moisture-level').style.left = data.percent + '%';
-          
-          // Show error message when sensor is in air
-          const errorMessage = document.getElementById('error-message');
-          if (data.inAir) {
-            errorMessage.style.display = 'block';
-          } else {
-            errorMessage.style.display = 'none';
-          }
+          document.getElementById('moisture-raw').innerHTML = data.raw;
         });
     }
-    
-    // Refresh sensor data every 5 seconds
     setInterval(refreshSensorData, 5000);
   </script>
-  </head><body>
+</head><body>
   <div class="container">
-    <h2>Control Panel</h2>
+    <h2>Watering System</h2>
     
-    <div class="sensor-container">
-      <h3>Soil Moisture</h3>
-      <div class="sensor-value">
-        <span id="moisture-percent">%MOISTURE_PERCENT%</span>
-        <span class="sensor-raw" id="moisture-raw">(Raw: %MOISTURE_RAW%)</span>
-      </div>      <div class="moisture-indicator">
-        <div class="moisture-level" id="moisture-level" style="left: %MOISTURE_PERCENT%%;"></div>
-      </div>
-      <div id="error-message" style="color: red; font-weight: bold; margin-top: 10px; display: none;">
-        Warning: Sensor appears to be in air or not properly connected!
-      </div>
-      <button class="refresh-btn" onclick="refreshSensorData()">Refresh</button>
+    <div class="sensor">
+      <h3>Soil Moisture: <span id="moisture-percent">%MOISTURE_PERCENT%</span>%</h3>
+      <p>Raw: <span id="moisture-raw">%MOISTURE_RAW%</span></p>
+      <p>Wet: %WET_THRESHOLD% | Dry: %DRY_THRESHOLD%</p>
     </div>
     
     <form action="/get">
-      <div class="slider-container">
-        <label for="value1">Value 1 (Current: %VALUE1%)</label>
-        <input type="range" name="value1" min="0" max="100" value="%VALUE1%" oninput="this.nextElementSibling.value = this.value">
-        <output class="slider-value">%VALUE1%</output>
-      </div>
+      <p>
+        <label>Wet Threshold: %WET_THRESHOLD%%</label><br>
+        <input type="range" name="wetThreshold" min="0" max="100" value="%WET_THRESHOLD%">
+      </p>
       
-      <div class="slider-container">
-        <label for="value2">Value 2 (Current: %VALUE2%)</label>
-        <input type="range" name="value2" min="0" max="100" value="%VALUE2%" oninput="this.nextElementSibling.value = this.value">
-        <output class="slider-value">%VALUE2%</output>
-      </div>
+      <p>
+        <label>Dry Threshold: %DRY_THRESHOLD%%</label><br>
+        <input type="range" name="dryThreshold" min="0" max="100" value="%DRY_THRESHOLD%">
+      </p>
       
-      <br>
-      <input type="submit" value="Submit">
+      <input type="submit" value="Update">
     </form>
   </div>
 </body></html>)rawliteral";
@@ -148,8 +120,8 @@ public:
     updateSoilMoisture(); // Update moisture reading
 
     String html = String(index_html);
-    html.replace("%VALUE1%", String(value1));
-    html.replace("%VALUE2%", String(value2));
+    html.replace("%WET_THRESHOLD%", String(moistureThresholdWet));
+    html.replace("%DRY_THRESHOLD%", String(moistureThresholdDry));
     html.replace("%MOISTURE_RAW%", String(soilMoistureRaw));
     html.replace("%MOISTURE_PERCENT%", String(soilMoisturePercent));
 
@@ -163,6 +135,7 @@ public:
 void setup()
 {
   Serial.begin(115200);
+  delay(2000); // Allow time for serial monitor to connect
   Serial.println("Setting up captive portal...");
 
   // Initialize ADC for soil moisture sensor
@@ -181,8 +154,8 @@ void setup()
     updateSoilMoisture(); // Update moisture reading
     
     String html = String(index_html);
-    html.replace("%VALUE1%", String(value1));
-    html.replace("%VALUE2%", String(value2));
+    html.replace("%WET_THRESHOLD%", String(moistureThresholdWet));
+    html.replace("%DRY_THRESHOLD%", String(moistureThresholdDry));
     html.replace("%MOISTURE_RAW%", String(soilMoistureRaw));
     html.replace("%MOISTURE_PERCENT%", String(soilMoisturePercent));
     
@@ -204,20 +177,20 @@ void setup()
 
   server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-    if (request->hasParam("value1")) {
-      value1 = request->getParam("value1")->value().toInt();
+    if (request->hasParam("wetThreshold")) {
+      moistureThresholdWet = request->getParam("wetThreshold")->value().toInt();
       // Ensure value is within range
-      value1 = constrain(value1, 0, 100);
-      Serial.print("Value 1 set to: ");
-      Serial.println(value1);
+      moistureThresholdWet = constrain(moistureThresholdWet, 0, 100);
+      Serial.print("Wet threshold set to: ");
+      Serial.println(moistureThresholdWet);
     }
     
-    if (request->hasParam("value2")) {
-      value2 = request->getParam("value2")->value().toInt();
+    if (request->hasParam("dryThreshold")) {
+      moistureThresholdDry = request->getParam("dryThreshold")->value().toInt();
       // Ensure value is within range
-      value2 = constrain(value2, 0, 100);
-      Serial.print("Value 2 set to: ");
-      Serial.println(value2);
+      moistureThresholdDry = constrain(moistureThresholdDry, 0, 100);
+      Serial.print("Dry threshold set to: ");
+      Serial.println(moistureThresholdDry);
     }
     
     // Redirect back to the main page to show updated values
