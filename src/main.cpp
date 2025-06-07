@@ -4,12 +4,14 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <Preferences.h>
 #include "html_content.h"
 DNSServer dnsServer;
 AsyncWebServer server(80);
+Preferences preferences;
 
 // WiFi configuration
-const char *WIFI_SSID = "ESP32-Portal";
+const char *WIFI_SSID = "ESP32-Portal2";
 const char *WIFI_PASSWORD = "123456789"; // Empty for open network, or set a password
 
 // Pin definitions
@@ -27,6 +29,55 @@ bool pumpState = false;        // Current pump state
 int AIR_VALUE = 3700;   // Value when sensor is in air (dry)
 int DRY_VALUE = 3200;   // Value when soil is dry
 int WATER_VALUE = 1500; // Value when sensor is in water (wet)
+
+// Function to save settings to non-volatile storage
+void saveSettings()
+{
+  preferences.begin("watering", false);
+  preferences.putInt("wetThreshold", moistureThresholdWet);
+  preferences.putInt("dryThreshold", moistureThresholdDry);
+  preferences.putInt("airValue", AIR_VALUE);
+  preferences.putInt("dryValue", DRY_VALUE);
+  preferences.putInt("waterValue", WATER_VALUE);
+  preferences.end();
+  Serial.println("Settings saved to flash memory");
+}
+
+// Function to save individual setting to reduce flash wear
+void saveSetting(const char *key, int value)
+{
+  preferences.begin("watering", false);
+  int currentValue = preferences.getInt(key, -1);
+  if (currentValue != value)
+  {
+    preferences.putInt(key, value);
+    Serial.printf("Setting %s updated: %d -> %d\n", key, currentValue, value);
+  }
+  else
+  {
+    Serial.printf("Setting %s unchanged: %d\n", key, value);
+  }
+  preferences.end();
+}
+
+// Function to load settings from non-volatile storage
+void loadSettings()
+{
+  preferences.begin("watering", true);                           // true = read-only
+  moistureThresholdWet = preferences.getInt("wetThreshold", 80); // Default: 80
+  moistureThresholdDry = preferences.getInt("dryThreshold", 30); // Default: 30
+  AIR_VALUE = preferences.getInt("airValue", 3700);              // Default: 3700
+  DRY_VALUE = preferences.getInt("dryValue", 3200);              // Default: 3200
+  WATER_VALUE = preferences.getInt("waterValue", 1500);          // Default: 1500
+  preferences.end();
+
+  Serial.println("Settings loaded from flash memory:");
+  Serial.printf("  Wet Threshold: %d%%\n", moistureThresholdWet);
+  Serial.printf("  Dry Threshold: %d%%\n", moistureThresholdDry);
+  Serial.printf("  Air Value: %d\n", AIR_VALUE);
+  Serial.printf("  Dry Value: %d\n", DRY_VALUE);
+  Serial.printf("  Water Value: %d\n", WATER_VALUE);
+}
 
 // Function to control pump
 void controlPump(bool state)
@@ -129,6 +180,9 @@ void setup()
   delay(2000); // Allow time for serial monitor to connect
   Serial.println("Setting up captive portal...");
 
+  // Load saved settings from flash memory
+  loadSettings();
+
   // Initialize pins
   pinMode(SOIL_MOISTURE_PIN, INPUT);
   pinMode(PUMP_PIN, OUTPUT);
@@ -176,41 +230,39 @@ void setup()
   server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     if (request->hasParam("wetThreshold")) {
-      moistureThresholdWet = request->getParam("wetThreshold")->value().toInt();
-      // Ensure value is within range
-      moistureThresholdWet = constrain(moistureThresholdWet, 0, 100);
-      Serial.print("Wet threshold set to: ");
-      Serial.println(moistureThresholdWet);
+      int newValue = request->getParam("wetThreshold")->value().toInt();
+      newValue = constrain(newValue, 0, 100);
+      moistureThresholdWet = newValue;
+      saveSetting("wetThreshold", moistureThresholdWet);
     }
     
     if (request->hasParam("dryThreshold")) {
-      moistureThresholdDry = request->getParam("dryThreshold")->value().toInt();
-      // Ensure value is within range
-      moistureThresholdDry = constrain(moistureThresholdDry, 0, 100);
-      Serial.print("Dry threshold set to: ");
-      Serial.println(moistureThresholdDry);
+      int newValue = request->getParam("dryThreshold")->value().toInt();
+      newValue = constrain(newValue, 0, 100);
+      moistureThresholdDry = newValue;
+      saveSetting("dryThreshold", moistureThresholdDry);
     }
     
     // Handle advanced calibration parameters
     if (request->hasParam("airValue")) {
-      AIR_VALUE = request->getParam("airValue")->value().toInt();
-      AIR_VALUE = constrain(AIR_VALUE, 0, 4095);
-      Serial.print("Air value set to: ");
-      Serial.println(AIR_VALUE);
+      int newValue = request->getParam("airValue")->value().toInt();
+      newValue = constrain(newValue, 0, 4095);
+      AIR_VALUE = newValue;
+      saveSetting("airValue", AIR_VALUE);
     }
     
     if (request->hasParam("dryValue")) {
-      DRY_VALUE = request->getParam("dryValue")->value().toInt();
-      DRY_VALUE = constrain(DRY_VALUE, 0, 4095);
-      Serial.print("Dry soil value set to: ");
-      Serial.println(DRY_VALUE);
+      int newValue = request->getParam("dryValue")->value().toInt();
+      newValue = constrain(newValue, 0, 4095);
+      DRY_VALUE = newValue;
+      saveSetting("dryValue", DRY_VALUE);
     }
     
     if (request->hasParam("waterValue")) {
-      WATER_VALUE = request->getParam("waterValue")->value().toInt();
-      WATER_VALUE = constrain(WATER_VALUE, 0, 4095);
-      Serial.print("Water value set to: ");
-      Serial.println(WATER_VALUE);
+      int newValue = request->getParam("waterValue")->value().toInt();
+      newValue = constrain(newValue, 0, 4095);
+      WATER_VALUE = newValue;
+      saveSetting("waterValue", WATER_VALUE);
     }
     
     // Redirect back to the main page to show updated values
