@@ -1,4 +1,4 @@
-// Combine the best of both examples
+// Automated watering system with web interface
 #include <Arduino.h>
 #include <DNSServer.h>
 #include <WiFi.h>
@@ -6,31 +6,40 @@
 #include <ESPAsyncWebServer.h>
 #include <Preferences.h>
 #include "html_content.h"
+
 DNSServer dnsServer;
 AsyncWebServer server(80);
 Preferences preferences;
 
-// WiFi configuration
 const char *WIFI_SSID = "ESP32-Portal2";
-const char *WIFI_PASSWORD = "123456789"; // Empty for open network, or set a password
+const char *WIFI_PASSWORD = "123456789";
 
-// Pin definitions
-const int SOIL_MOISTURE_PIN = A0; // Connect soil moisture sensor to GPIO 34 (ADC pin)
-const int PUMP_PIN = 5;           // MOSFET gate pin for pump control
+const int SOIL_MOISTURE_PIN = 4;
+const int PUMP_PIN = 5;
 
-// Values
-int moistureThresholdWet = 80; // Lower threshold - soil is wet enough below this value
-int moistureThresholdDry = 30; // Upper threshold - soil is too dry above this value, needs watering
-int soilMoistureRaw = 0;       // Raw ADC value from sensor
-int soilMoisturePercent = 0;   // Moisture in percentage
-bool pumpState = false;        // Current pump state
+// Default configuration values
+const int DEFAULT_WET_THRESHOLD = 80;
+const int DEFAULT_DRY_THRESHOLD = 30;
+const int DEFAULT_AIR_VALUE = 3700;
+const int DEFAULT_DRY_VALUE = 3200;
+const int DEFAULT_WATER_VALUE = 1500;
 
-// Calibration values for soil moisture sensor
-int AIR_VALUE = 3700;   // Value when sensor is in air (dry)
-int DRY_VALUE = 3200;   // Value when soil is dry
-int WATER_VALUE = 1500; // Value when sensor is in water (wet)
+// Current settings (initialized by loadSettings())
+int moistureThresholdWet;
+int moistureThresholdDry;
 
-// Function to save settings to non-volatile storage
+// Runtime sensor readings (updated by updateSoilMoisture())
+int soilMoistureRaw;
+int soilMoisturePercent;
+
+// Pump state (initialized to OFF to match hardware setup)
+bool pumpState = false;
+
+// Sensor calibration values (initialized by loadSettings())
+int AIR_VALUE;
+int DRY_VALUE;
+int WATER_VALUE;
+
 void saveSettings()
 {
   preferences.begin("watering", false);
@@ -43,7 +52,6 @@ void saveSettings()
   Serial.println("Settings saved to flash memory");
 }
 
-// Function to save individual setting to reduce flash wear
 void saveSetting(const char *key, int value)
 {
   preferences.begin("watering", false);
@@ -60,15 +68,14 @@ void saveSetting(const char *key, int value)
   preferences.end();
 }
 
-// Function to load settings from non-volatile storage
 void loadSettings()
 {
-  preferences.begin("watering", true);                           // true = read-only
-  moistureThresholdWet = preferences.getInt("wetThreshold", 80); // Default: 80
-  moistureThresholdDry = preferences.getInt("dryThreshold", 30); // Default: 30
-  AIR_VALUE = preferences.getInt("airValue", 3700);              // Default: 3700
-  DRY_VALUE = preferences.getInt("dryValue", 3200);              // Default: 3200
-  WATER_VALUE = preferences.getInt("waterValue", 1500);          // Default: 1500
+  preferences.begin("watering", true);
+  moistureThresholdWet = preferences.getInt("wetThreshold", DEFAULT_WET_THRESHOLD);
+  moistureThresholdDry = preferences.getInt("dryThreshold", DEFAULT_DRY_THRESHOLD);
+  AIR_VALUE = preferences.getInt("airValue", DEFAULT_AIR_VALUE);
+  DRY_VALUE = preferences.getInt("dryValue", DEFAULT_DRY_VALUE);
+  WATER_VALUE = preferences.getInt("waterValue", DEFAULT_WATER_VALUE);
   preferences.end();
 
   Serial.println("Settings loaded from flash memory:");
@@ -79,7 +86,6 @@ void loadSettings()
   Serial.printf("  Water Value: %d\n", WATER_VALUE);
 }
 
-// Function to control pump
 void controlPump(bool state)
 {
   pumpState = state;
@@ -88,10 +94,9 @@ void controlPump(bool state)
   Serial.println(state ? "ON" : "OFF");
 }
 
-// Function to read soil moisture and calculate percentage
 void updateSoilMoisture()
 {
-  // Read the sensor value (average of multiple readings for stability)
+  // Average multiple readings for stability
   int sum = 0;
   for (int i = 0; i < 5; i++)
   {
@@ -100,37 +105,31 @@ void updateSoilMoisture()
   }
   soilMoistureRaw = sum / 5;
 
-  // Check if sensor is in air (not in soil)
+  // Safety check: sensor not in soil
   if (soilMoistureRaw > AIR_VALUE)
   {
-    soilMoisturePercent = 0; // If reading is higher than AIR_VALUE, sensor is not in soil
+    soilMoisturePercent = 0;
     Serial.println("Sensor not in soil - pump disabled for safety");
 
-    // Turn off pump immediately for safety when sensor is not reading properly
     if (pumpState)
     {
       controlPump(false);
     }
-    return; // Exit function early - no pump control when sensor is invalid
+    return;
   }
   else
   {
-    // Convert to percentage (0% = dry soil, 100% = wet)
     soilMoisturePercent = map(soilMoistureRaw, DRY_VALUE, WATER_VALUE, 0, 100);
-
-    // Constrain to 0-100% range
     soilMoisturePercent = constrain(soilMoisturePercent, 0, 100);
   }
 
-  // Automatic pump control logic - only when sensor is reading properly
+  // Pump control logic with hysteresis
   if (soilMoisturePercent <= moistureThresholdDry && !pumpState)
   {
-    // Soil is too dry (low percentage), turn pump ON
     controlPump(true);
   }
   else if (soilMoisturePercent >= moistureThresholdWet && pumpState)
   {
-    // Soil is wet enough (high percentage), turn pump OFF
     controlPump(false);
   }
 
@@ -142,62 +141,34 @@ void updateSoilMoisture()
   Serial.println(pumpState ? "ON" : "OFF");
 }
 
-class CaptiveRequestHandler : public AsyncWebHandler
-{
-public:
-  CaptiveRequestHandler() {}
-  virtual ~CaptiveRequestHandler() {}
-
-  bool canHandle(AsyncWebServerRequest *request)
-  {
-    return true;
-  }
-  void handleRequest(AsyncWebServerRequest *request)
-  {
-    updateSoilMoisture(); // Update moisture reading
-
-    String html = String(index_html);
-    html.replace("%WET_THRESHOLD%", String(moistureThresholdWet));
-    html.replace("%DRY_THRESHOLD%", String(moistureThresholdDry));
-    html.replace("%MOISTURE_RAW%", String(soilMoistureRaw));
-    html.replace("%MOISTURE_PERCENT%", String(soilMoisturePercent));
-    html.replace("%PUMP_STATUS%", pumpState ? "ON" : "OFF");
-    html.replace("%PUMP_CLASS%", pumpState ? "pump-on" : "pump-off");
-    html.replace("%AIR_VALUE%", String(AIR_VALUE));
-    html.replace("%DRY_VALUE%", String(DRY_VALUE));
-    html.replace("%WATER_VALUE%", String(WATER_VALUE));
-
-    AsyncWebServerResponse *response = request->beginResponse(200, "text/html", html);
-    response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    request->send(response);
-    Serial.println("Captive portal request handled");
-  }
-};
-
 void setup()
 {
   Serial.begin(115200);
-  delay(2000); // Allow time for serial monitor to connect
-  Serial.println("Setting up captive portal...");
+  delay(2000);
+  Serial.println("Setting up simplified web portal...");
 
-  // Load saved settings from flash memory
   loadSettings();
 
-  // Initialize pins
   pinMode(SOIL_MOISTURE_PIN, INPUT);
   pinMode(PUMP_PIN, OUTPUT);
-  digitalWrite(PUMP_PIN, LOW); // Start with pump OFF
-  analogReadResolution(12);    // 12-bit resolution for ESP32
-  // Configure access point
+  digitalWrite(PUMP_PIN, LOW);
+  analogReadResolution(12);
+
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(WIFI_SSID, WIFI_PASSWORD); // Use variables for AP name and password
+  WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
+
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress netMsk(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, netMsk);
+
   Serial.print("AP IP address: ");
   Serial.println(WiFi.softAPIP());
-
-  // Set up the web server
+  Serial.print("AP MAC address: ");
+  Serial.println(WiFi.softAPmacAddress());
+  delay(500);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-    updateSoilMoisture(); // Update moisture reading
+    updateSoilMoisture();
     
     String html = String(index_html);
     html.replace("%WET_THRESHOLD%", String(moistureThresholdWet));
@@ -214,10 +185,9 @@ void setup()
     response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     request->send(response); });
 
-  // Add endpoint for AJAX sensor data updates
   server.on("/sensor-data", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-    updateSoilMoisture(); // Update moisture reading
+    updateSoilMoisture();
     
     String json = "{\"raw\":" + String(soilMoistureRaw) + 
                   ",\"percent\":" + String(soilMoisturePercent) + 
@@ -243,7 +213,6 @@ void setup()
       saveSetting("dryThreshold", moistureThresholdDry);
     }
     
-    // Handle advanced calibration parameters
     if (request->hasParam("airValue")) {
       int newValue = request->getParam("airValue")->value().toInt();
       newValue = constrain(newValue, 0, 4095);
@@ -265,27 +234,46 @@ void setup()
       saveSetting("waterValue", WATER_VALUE);
     }
     
-    // Redirect back to the main page to show updated values
     request->redirect("/"); });
+  server.onNotFound([](AsyncWebServerRequest *request)
+                    {
+    updateSoilMoisture();
+    
+    String html = String(index_html);
+    html.replace("%WET_THRESHOLD%", String(moistureThresholdWet));
+    html.replace("%DRY_THRESHOLD%", String(moistureThresholdDry));
+    html.replace("%MOISTURE_RAW%", String(soilMoistureRaw));
+    html.replace("%MOISTURE_PERCENT%", String(soilMoisturePercent));
+    html.replace("%PUMP_STATUS%", pumpState ? "ON" : "OFF");
+    html.replace("%PUMP_CLASS%", pumpState ? "pump-on" : "pump-off");
+    html.replace("%AIR_VALUE%", String(AIR_VALUE));
+    html.replace("%DRY_VALUE%", String(DRY_VALUE));
+    html.replace("%WATER_VALUE%", String(WATER_VALUE));
+    
+    request->send(200, "text/html", html); });
 
-  // Default handler for captive portal
-  server.addHandler(new CaptiveRequestHandler()).setFilter(ON_AP_FILTER);
+  if (dnsServer.start(53, "*", WiFi.softAPIP()))
+  {
+    Serial.println("DNS server started successfully");
+  }
+  else
+  {
+    Serial.println("Failed to start DNS server");
+  }
 
-  // Start DNS server - crucial for captive portal detection
-  dnsServer.start(53, "*", WiFi.softAPIP());
-
-  // Start server
   server.begin();
   Serial.println("HTTP server started");
+  Serial.println("Web portal ready!");
+  Serial.println("Connect to WiFi: " + String(WIFI_SSID));
+  Serial.println("Then browse to: http://192.168.4.1");
 }
 
 void loop()
 {
   dnsServer.processNextRequest();
 
-  // Check soil moisture and control pump every 10 seconds
   static unsigned long lastCheck = 0;
-  if (millis() - lastCheck > 1000)
+  if (millis() - lastCheck > 10000)
   {
     updateSoilMoisture();
     lastCheck = millis();
