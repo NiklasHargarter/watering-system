@@ -1,127 +1,107 @@
 #ifndef HTML_CONTENT_H
 #define HTML_CONTENT_H
 #include <Arduino.h>
-const char index_html[] PROGMEM = R"rawliteral(
+
+// Simple mobile overview page
+const char overview_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
   <title>Watering System</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: Arial; margin: 20px; }
-    .container { max-width: 400px; margin: 0 auto; }
-    input[type=range] { width: 100%; }
-    input[type=submit] { background-color: #4CAF50; color: white; border: none; padding: 10px; }
-    .sensor { background-color: #f0f0f0; padding: 10px; margin: 10px 0; }
-    .pump-on { background-color: #4CAF50; color: white; }
-    .pump-off { background-color: #f44336; color: white; }    .slider-container { margin: 10px 0; }
-    .slider-label { font-weight: bold; }
-    .advanced-config { 
-      background-color: #fff3cd; 
-      border: 1px solid #ffeaa7; 
-      padding: 15px; 
-      margin: 10px 0; 
-      border-radius: 5px;
-      display: none;
-    }
-    .config-toggle { 
-      background-color: #6c757d; 
-      color: white; 
-      border: none; 
-      padding: 8px 16px; 
-      margin: 10px 0;
-      border-radius: 3px;
-      cursor: pointer;
-    }
-    .config-toggle:hover { background-color: #5a6268; }
-    .config-input { 
-      width: 100%; 
-      padding: 5px; 
-      margin: 5px 0; 
-      border: 1px solid #ddd; 
-      border-radius: 3px;
-    }
-    .warning { color: #856404; font-weight: bold; }
+    body { margin: 10px; font-size: 18px; }
+    div { border: 1px solid #ccc; padding: 10px; margin: 5px 0; }
+    .on { background: #90EE90; }
+    .off { background: #FFB6C1; }
+    .cooldown { background: #FFA500; }
+    .error { background: #FF6B6B; color: white; font-weight: bold; }
+    a { display: block; text-decoration: none; background: #87CEEB; padding: 8px; margin: 5px 0; text-align: center; }
   </style>
   <script>
-    function refreshSensorData() {
-      fetch('/sensor-data')
-        .then(response => response.json())
-        .then(data => {
-          document.getElementById('moisture-percent').innerHTML = data.percent + '%';
-          document.getElementById('moisture-raw').innerHTML = data.raw;
-          document.getElementById('pump-status').innerHTML = data.pumpState ? 'ON' : 'OFF';
-          document.getElementById('pump-status').className = data.pumpState ? 'pump-on' : 'pump-off';
-        });
+    function refreshPage() {
+      location.reload();
     }
-      function updateSliderValue(sliderId, valueId) {
-      const slider = document.getElementById(sliderId);
-      const valueDisplay = document.getElementById(valueId);
-      valueDisplay.innerHTML = slider.value;
-    }
-    
-    function toggleAdvancedConfig() {
-      const configDiv = document.getElementById('advanced-config');
-      const toggleBtn = document.getElementById('config-toggle-btn');
-      if (configDiv.style.display === 'none' || configDiv.style.display === '') {
-        configDiv.style.display = 'block';
-        toggleBtn.innerHTML = 'Hide Advanced Config';
-      } else {
-        configDiv.style.display = 'none';
-        toggleBtn.innerHTML = 'Show Advanced Config';
-      }
-    }
-    
-    setInterval(refreshSensorData, 1000);
+    setInterval(refreshPage, 15000); // Auto-refresh every 15 seconds
   </script>
 </head><body>
-  <div class="container">
-    <h2>Watering System</h2>
-    
-    <div class="sensor">
-      <h3>Soil Moisture: <span id="moisture-percent">%MOISTURE_PERCENT%</span></h3>
-      <p>Raw: <span id="moisture-raw">%MOISTURE_RAW%</span></p>
-      <p>Wet: %WET_THRESHOLD% | Dry: %DRY_THRESHOLD%</p>
-      <p>Pump: <span id="pump-status" class="%PUMP_CLASS%">%PUMP_STATUS%</span></p>
-    </div>
-    
-    <form action="/get">
-      <div class="slider-container">
-        <label class="slider-label">Wet Threshold: <span id="wet-value">%WET_THRESHOLD%</span>%</label><br>
-        <input type="range" id="wet-slider" name="wetThreshold" min="0" max="100" value="%WET_THRESHOLD%" 
-               oninput="updateSliderValue('wet-slider', 'wet-value')">
-      </div>
-      
-      <div class="slider-container">
-        <label class="slider-label">Dry Threshold: <span id="dry-value">%DRY_THRESHOLD%</span>%</label><br>
-        <input type="range" id="dry-slider" name="dryThreshold" min="0" max="100" value="%DRY_THRESHOLD%" 
-               oninput="updateSliderValue('dry-slider', 'dry-value')">
-      </div>      
-      <input type="submit" value="Update">
-    </form>
-    
-    <button id="config-toggle-btn" class="config-toggle" onclick="toggleAdvancedConfig()">Show Advanced Config</button>
-    
-    <div id="advanced-config" class="advanced-config">
-      <h3>Advanced Sensor Calibration</h3>
-      
-      <form action="/get">
-        <label for="air-value">Air Value (sensor in air):</label>
-        <input type="number" id="air-value" name="airValue" value="%AIR_VALUE%" class="config-input" min="0" max="4095">
-        
-        <label for="dry-value">Dry Soil Value:</label>
-        <input type="number" id="dry-value" name="dryValue" value="%DRY_VALUE%" class="config-input" min="0" max="4095">
-        
-        <label for="water-value">Water Value (sensor in water):</label>
-        <input type="number" id="water-value" name="waterValue" value="%WATER_VALUE%" class="config-input" min="0" max="4095">
-        
-        <p style="font-size: 12px; color: #666;">
-          Current values: Air=%AIR_VALUE%, Dry=%DRY_VALUE%, Water=%WATER_VALUE%<br>
-          Raw sensor reading: %MOISTURE_RAW%
-        </p>
-        
-        <input type="submit" value="Update Calibration" style="background-color: #dc3545;">
-      </form>
-    </div>
+  <h2>Watering System</h2>
+  <a href="/">Refresh</a>
+  %ZONE_LIST%
+</body></html>)rawliteral";
+
+// Simple mobile zone config page
+const char zone_config_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html><head>
+  <title>%ZONE_NAME%</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin: 10px; font-size: 18px; }
+    div { border: 1px solid #ccc; padding: 10px; margin: 5px 0; }
+    .on { background: #90EE90; }
+    .off { background: #FFB6C1; }
+    .cooldown { background: #FFA500; }
+    .error { background: #FF6B6B; color: white; font-weight: bold; }
+    input { width: 100%; padding: 8px; margin: 5px 0; font-size: 16px; }
+    input[type=submit], a { display: block; text-decoration: none; background: #87CEEB; padding: 8px; text-align: center; border: none; }
+    .section { margin: 20px 0; }
+    small { color: #666; font-size: 14px; display: block; margin: 5px 0; }
+  </style>
+  <script>
+    function refreshPage() {
+      location.reload();
+    }
+    setInterval(refreshPage, 10000); // Auto-refresh every 10 seconds
+  </script>
+</head><body>
+  <a href="/">Back to Overview</a>
+  
+  <h3>%ZONE_NAME%</h3>
+  
+  <div>
+    <p>Moisture: %MOISTURE_PERCENT%%</p>
+    <p>Raw Reading: %MOISTURE_RAW%</p>
+    <p class="%PUMP_CLASS%">Pump: %PUMP_STATUS%</p>
+    %SENSOR_STATUS%
+    %COOLDOWN_INFO%
   </div>
+  
+  <form action="/zone/%ZONE_ID%/config" method="GET">
+    <div class="section">
+      <h4>Moisture Thresholds</h4>
+      <p>Wet Threshold (pump turns OFF): %WET_THRESHOLD%%</p>
+      <input type="number" name="wetThreshold" value="%WET_THRESHOLD%" min="0" max="100" required>
+      
+      <p>Dry Threshold (pump turns ON): %DRY_THRESHOLD%%</p>
+      <input type="number" name="dryThreshold" value="%DRY_THRESHOLD%" min="0" max="100" required>
+      <small>Note: Wet threshold must be higher than dry threshold for proper hysteresis</small>
+    </div>
+    
+    <div class="section">
+      <h4>Sensor Calibration</h4>
+      <small>Calibrate by placing sensor in different conditions and noting the raw values</small>
+      
+      <p>Air Value (sensor in air): %AIR_VALUE%</p>
+      <input type="number" name="airValue" value="%AIR_VALUE%" min="0" max="4095" required>
+      
+      <p>Dry Soil Value: %DRY_VALUE%</p>
+      <input type="number" name="dryValue" value="%DRY_VALUE%" min="0" max="4095" required>
+      
+      <p>Wet Soil Value: %WATER_VALUE%</p>
+      <input type="number" name="waterValue" value="%WATER_VALUE%" min="0" max="4095" required>
+    </div>
+    
+    <div class="section">
+      <h4>Timing Settings</h4>
+      <small>Configure pump operation timing</small>
+      
+      <p>Max Pump Runtime (seconds): %MAX_RUNTIME_SEC%</p>
+      <input type="number" name="maxRuntime" value="%MAX_RUNTIME_SEC%" min="5" max="300" required>
+      
+      <p>Cooldown Period (seconds): %COOLDOWN_SEC%</p>
+      <input type="number" name="cooldown" value="%COOLDOWN_SEC%" min="1" max="3600" required>
+    </div>
+    
+    <input type="submit" value="Save All Settings">
+  </form>
 </body></html>)rawliteral";
 
 #endif
