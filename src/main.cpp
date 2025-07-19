@@ -1,45 +1,69 @@
-// Automated watering system with web interface - Multi-zone support
 #include <Arduino.h>
-#include <DNSServer.h>
 #include <WiFi.h>
+#include <vector>
+#ifdef USE_WIFI_MANAGER
+#include <WiFiManager.h>
+#else
+#include <DNSServer.h>
+#endif
+
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <vector>
+
 #include "html_content.h"
 #include "WateringZone.h"
 
+#ifndef USE_WIFI_MANAGER
 DNSServer dnsServer;
-AsyncWebServer server(80);
-
 const char *WIFI_SSID = "ESP32-Portal2";
 const char *WIFI_PASSWORD = "123456789";
+#endif
 
-// Zone definitions - easily configurable
+AsyncWebServer server(80);
+
 std::vector<WateringZone> zones;
 
 void initializeZones()
 {
-  // Add your zones here - easily configurable
-  zones.push_back(WateringZone(1, "Garden Bed 1", 1, 5));
-  zones.push_back(WateringZone(2, "Garden Bed 2", 0, 7)); // Example second zone
+  zones.push_back(WateringZone(1, "Garden Bed 1", 0, 5));
 
-  // Initialize hardware and load settings for each zone
   for (auto &zone : zones)
   {
-    zone.init(); // This now handles both hardware setup and settings loading
+    zone.init();
   }
 }
 
-void setup()
+#ifdef USE_WIFI_MANAGER
+bool setupWiFi()
 {
-  Serial.begin(115200);
-  delay(2000);
-  Serial.println("Setting up multi-zone watering system...");
+  Serial.println("Starting WiFi Manager...");
 
-  // Initialize zones
-  initializeZones();
+  WiFiManager wm;
 
-  analogReadResolution(12);
+  wm.setConfigPortalTimeout(300);
+  bool connected = wm.autoConnect("WateringSystem-Setup", "123456789");
+
+  if (!connected)
+  {
+    Serial.println("Failed to connect to WiFi");
+    return false;
+  }
+
+  Serial.println("WiFi connected successfully!");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println("Access the system at: http://" + WiFi.localIP().toString());
+  return true;
+}
+
+void handleNetworkLoop()
+{
+}
+
+#else
+bool setupWiFi()
+{
+  Serial.println("Starting Access Point mode...");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
@@ -52,12 +76,31 @@ void setup()
   Serial.println(WiFi.softAPIP());
   Serial.print("AP MAC address: ");
   Serial.println(WiFi.softAPmacAddress());
-  delay(500);
 
-  // Main overview page
+  if (dnsServer.start(53, "*", WiFi.softAPIP()))
+  {
+    Serial.println("DNS server started successfully");
+  }
+  else
+  {
+    Serial.println("Failed to start DNS server");
+  }
+
+  Serial.println("Connect to WiFi: " + String(WIFI_SSID));
+  Serial.println("Then browse to: http://192.168.4.1");
+  return true;
+}
+
+void handleNetworkLoop()
+{
+  dnsServer.processNextRequest();
+}
+#endif
+
+void setupWebServer()
+{
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-    // Update all zones
     for (auto& zone : zones) {
       zone.updateSoilMoisture();
     }
@@ -69,12 +112,10 @@ void setup()
       zoneList += "<h4>" + zone.name + "</h4>";
       zoneList += "<p>Moisture: " + String(zone.soilMoisturePercent) + "%</p>";
       
-      // Sensor status
       if (zone.isSensorInAir()) {
         zoneList += "<p class='error'>WARNING: SENSOR IN AIR</p>";
       }
       
-      // Pump status with cooldown info
       String pumpClass = "off";
       String pumpStatus = "OFF";
       if (zone.pumpState) {
@@ -93,7 +134,6 @@ void setup()
     html.replace("%ZONE_LIST%", zoneList);
     request->send(200, "text/html", html); });
 
-  // Individual zone configuration pages
   server.on("^/zone/([0-9]+)$", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     String zoneIdStr = request->pathArg(0);
@@ -129,14 +169,12 @@ void setup()
     html.replace("%MAX_RUNTIME_SEC%", String(zone->maxPumpRuntimeMs / 1000));
     html.replace("%COOLDOWN_SEC%", String(zone->pumpCooldownMs / 1000));
     
-    // Add sensor status information
     String sensorStatus = "";
     if (zone->isSensorInAir()) {
       sensorStatus = "<p class='error'>WARNING: SENSOR IN AIR - Check sensor placement!</p>";
     }
     html.replace("%SENSOR_STATUS%", sensorStatus);
     
-    // Add cooldown information
     String cooldownInfo = "";
     if (zone->isPumpInCooldown()) {
       cooldownInfo = "<p class='cooldown'>Cooldown: " + String(zone->getRemainingCooldownSeconds()) + " seconds</p>";
@@ -144,7 +182,7 @@ void setup()
     html.replace("%COOLDOWN_INFO%", cooldownInfo);
     
     request->send(200, "text/html", html); });
-  // Configuration updates for zones
+
   server.on("^/zone/([0-9]+)/config$", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     String zoneIdStr = request->pathArg(0);
@@ -185,7 +223,6 @@ void setup()
       }
     }
     
-    // Validate threshold relationship
     if (zone->moistureThresholdWet <= zone->moistureThresholdDry) {
       Serial.printf("Zone %d: Invalid thresholds (wet=%d, dry=%d), fixing...\n", 
                     zoneId, zone->moistureThresholdWet, zone->moistureThresholdDry);
@@ -226,22 +263,22 @@ void setup()
     
     if (request->hasParam("maxRuntime")) {
       int newValue = request->getParam("maxRuntime")->value().toInt();
-      newValue = constrain(newValue, 1, 300); // 1 to 300 seconds
+      newValue = constrain(newValue, 1, 300);
       unsigned long newValueMs = newValue * 1000UL;
       if (zone->maxPumpRuntimeMs != newValueMs) {
         zone->maxPumpRuntimeMs = newValueMs;
-        zone->saveSetting("maxRun", newValue);  // Shorter key name
+        zone->saveSetting("maxRun", newValue);
         settingsChanged = true;
       }
     }
     
     if (request->hasParam("cooldown")) {
       int newValue = request->getParam("cooldown")->value().toInt();
-      newValue = constrain(newValue, 1, 3600); // 1 to 3600 seconds (1 hour max)
+      newValue = constrain(newValue, 1, 3600);
       unsigned long newValueMs = newValue * 1000UL;
       if (zone->pumpCooldownMs != newValueMs) {
         zone->pumpCooldownMs = newValueMs;
-        zone->saveSetting("cooldown", newValue);  // This key is already short enough
+        zone->saveSetting("cooldown", newValue);
         settingsChanged = true;
       }
     }
@@ -252,34 +289,43 @@ void setup()
     
     request->redirect("/zone/" + String(zoneId)); });
 
-  // Fallback handler
   server.onNotFound([](AsyncWebServerRequest *request)
                     { request->redirect("/"); });
 
-  if (dnsServer.start(53, "*", WiFi.softAPIP()))
-  {
-    Serial.println("DNS server started successfully");
-  }
-  else
-  {
-    Serial.println("Failed to start DNS server");
-  }
-
   server.begin();
   Serial.println("HTTP server started");
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(2000);
+  Serial.println("Setting up multi-zone watering system...");
+
+  initializeZones();
+  analogReadResolution(12);
+
+  if (!setupWiFi())
+  {
+    Serial.println("WiFi setup failed! Restarting...");
+    delay(3000);
+    ESP.restart();
+  }
+
+  delay(500);
+
+  setupWebServer();
+
   Serial.println("Multi-zone watering system ready!");
-  Serial.println("Connect to WiFi: " + String(WIFI_SSID));
-  Serial.println("Then browse to: http://192.168.4.1");
 }
 
 void loop()
 {
-  dnsServer.processNextRequest();
+  handleNetworkLoop();
 
   static unsigned long lastCheck = 0;
   if (millis() - lastCheck > 10000)
   {
-    // Update all zones
     for (auto &zone : zones)
     {
       zone.updateSoilMoisture();
